@@ -11,9 +11,17 @@ app = Flask(__name__)
 CORS(app)
 
 # Inicializar Firebase
-cred = credentials.Certificate('/etc/secrets/serviceAccountKey.json')
-firebase_admin.initialize_app(cred)
+# Recuperar la variable como string JSON crudo
+raw_env = os.getenv("FIREBASE_CONFIG_JSON")
 
+# Si esto da error, imprímelo:
+# print("DEBUG:", raw_env)
+
+# Convertir a diccionario
+firebase_config_dict = json.loads(raw_env)
+
+cred = credentials.Certificate(firebase_config_dict)
+firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # Carpeta donde se guardarán las imágenes
