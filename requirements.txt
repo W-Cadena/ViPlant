@@ -2,3 +2,4 @@ flask
 flask-cors
 pyrebase4
 gunicorn
+firebase-admin
