@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from flask_mysqldb import MySQL
+import firebase_admin
+from firebase_admin import credentials, firestore
 import os
 import base64
 from datetime import datetime
@@ -8,25 +9,22 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# Configuración MySQL
-app.config['MYSQL_HOST'] = 'localhost'
-app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = '1209'
-app.config['MYSQL_DB'] = 'datosPlanta'
-app.config['MYSQL_CURSORCLASS'] = 'DictCursor'
+# Inicializar Firebase
+cred = credentials.Certificate("serviceAccountKey.json")  # Asegúrate de tener este archivo
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
-mysql = MySQL(app)
-
-# Ruta para guardar imágenes
+# Carpeta donde se guardarán las imágenes
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
+# Ruta de prueba
 @app.route('/api/test', methods=['GET'])
 def test():
-    return jsonify({"mensaje": "Hola desde Flask"}), 200
+    return jsonify({"mensaje": "Hola desde Flask con Firebase"}), 200
 
-# POST: Recibir datos en formato JSON con imagen base64
+# POST: Recibir datos con imagen base64
 @app.route('/api/datos', methods=['POST'])
 def insertar_datos():
     try:
@@ -36,45 +34,47 @@ def insertar_datos():
         temperatura = float(data['temperatura'])
         luminosidad = float(data['luminosidad'])
         prediccion = data['prediccion']
-        fecha = data.get('fecha', datetime.now().date())
+        fecha = data.get('fecha', str(datetime.now().date()))
         imagen_base64 = data['imagen']
 
-        # Guardar imagen desde base64
+        # Guardar imagen localmente
         nombre_archivo = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         ruta_archivo = os.path.join(UPLOAD_FOLDER, nombre_archivo)
-
         with open(ruta_archivo, "wb") as f:
             f.write(base64.b64decode(imagen_base64))
 
-        # Insertar en la base de datos
-        cur = mysql.connection.cursor()
-        cur.execute("""
-            INSERT INTO datos (fecha, humedad, temperatura, luminosidad, imagen, prediccion)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (fecha, humedad, temperatura, luminosidad, nombre_archivo, prediccion))
-        mysql.connection.commit()
-        cur.close()
+        # Insertar en Firestore
+        db.collection('mediciones').add({
+            'fecha': fecha,
+            'humedad': humedad,
+            'temperatura': temperatura,
+            'luminosidad': luminosidad,
+            'imagen': nombre_archivo,
+            'prediccion': prediccion,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        })
 
-        return jsonify({'mensaje': 'Datos guardados correctamente'}), 200
+        return jsonify({'mensaje': 'Datos guardados en Firebase correctamente'}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
-# GET: Enviar datos a la app móvil
+# GET: Obtener últimos 50 datos
 @app.route('/api/datos', methods=['GET'])
 def obtener_datos():
     try:
-        cur = mysql.connection.cursor()
-        cur.execute("SELECT * FROM datos ORDER BY id DESC LIMIT 50")
-        datos = cur.fetchall()
-        cur.close()
-
+        docs = db.collection('mediciones').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50).stream()
+        datos = []
         servidor = request.host_url.rstrip('/')
-        for item in datos:
-            nombre_imagen = item['imagen'].replace('uploads/', '')
+
+        for doc in docs:
+            item = doc.to_dict()
+            nombre_imagen = item.get('imagen', '')
             item['imagen'] = f"{servidor}/uploads/{nombre_imagen}"
+            datos.append(item)
 
         return jsonify(datos), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
